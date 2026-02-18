@@ -1,109 +1,105 @@
 """
-Simple CrabPass Bot - Groq-powered Telegram bot
+Simple CrabPass Bot - Groq via HTTP
+Minimal dependencies - just telegram and requests
 """
 import os
 import sys
 import logging
+import requests
 
-# Setup logging first
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
 # Check required env vars
-required_vars = ["TELEGRAM_BOT_TOKEN", "OWNER_TELEGRAM_ID", "GROQ_API_KEY"]
-for var in required_vars:
+for var in ["TELEGRAM_BOT_TOKEN", "OWNER_TELEGRAM_ID", "GROQ_API_KEY"]:
     if not os.environ.get(var):
-        logger.error(f"Missing required env var: {var}")
+        logger.error(f"Missing: {var}")
         sys.exit(1)
 
-# Config from environment
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_TELEGRAM_ID"])
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 MODEL = os.environ.get("MODEL", "llama-3.3-70b-versatile")
-BOT_NAME = os.environ.get("BOT_NAME", "CrabPass Bot")
 
-logger.info(f"Starting {BOT_NAME}")
-logger.info(f"Owner ID: {OWNER_ID}")
-logger.info(f"Model: {MODEL}")
+logger.info(f"Bot starting, owner={OWNER_ID}, model={MODEL}")
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from groq import Groq
 
-groq_client = Groq(api_key=GROQ_API_KEY)
-
-# Conversation history per user
 conversations = {}
 
-SYSTEM_PROMPT = """You are a helpful personal AI assistant created by CrabPass.
-Be friendly, helpful, and concise. You can use emoji occasionally but don't overdo it.
-If you don't know something, say so honestly."""
+SYSTEM_PROMPT = "You are a helpful AI assistant. Be concise and friendly."
+
+
+def call_groq(messages):
+    """Call Groq API directly via HTTP"""
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": MODEL,
+            "messages": messages,
+            "max_tokens": 2000,
+            "temperature": 0.7
+        },
+        timeout=30
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
-        await update.message.reply_text("Sorry, this bot is private.")
         return
-    await update.message.reply_text(f"👋 Hi! I'm {BOT_NAME}. How can I help you today?")
+    await update.message.reply_text("👋 Hi! How can I help?")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if user_id != OWNER_ID:
-        logger.info(f"Ignoring message from non-owner: {user_id}")
+    uid = update.effective_user.id
+    if uid != OWNER_ID:
         return
     
-    user_message = update.message.text
-    logger.info(f"Message from {user_id}: {user_message[:50]}...")
+    msg = update.message.text
+    logger.info(f"Got: {msg[:30]}...")
     
-    if user_id not in conversations:
-        conversations[user_id] = []
+    if uid not in conversations:
+        conversations[uid] = []
     
-    conversations[user_id].append({"role": "user", "content": user_message})
-    conversations[user_id] = conversations[user_id][-20:]
+    conversations[uid].append({"role": "user", "content": msg})
+    conversations[uid] = conversations[uid][-10:]
     
     try:
-        response = groq_client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                *conversations[user_id]
-            ],
-            max_tokens=2000,
-            temperature=0.7,
-        )
-        
-        assistant_message = response.choices[0].message.content
-        conversations[user_id].append({"role": "assistant", "content": assistant_message})
-        
-        await update.message.reply_text(assistant_message)
-        
+        reply = call_groq([
+            {"role": "system", "content": SYSTEM_PROMPT},
+            *conversations[uid]
+        ])
+        conversations[uid].append({"role": "assistant", "content": reply})
+        await update.message.reply_text(reply)
     except Exception as e:
-        logger.error(f"Error calling Groq: {e}")
-        await update.message.reply_text("Sorry, I encountered an error. Please try again.")
+        logger.error(f"Groq error: {e}")
+        await update.message.reply_text(f"Error: {e}")
 
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
         return
     conversations[update.effective_user.id] = []
-    await update.message.reply_text("🧹 Conversation cleared!")
+    await update.message.reply_text("🧹 Cleared!")
 
 
 def main():
-    logger.info("Building application...")
+    logger.info("Building app...")
     app = Application.builder().token(BOT_TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("clear", clear))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    logger.info("Starting polling...")
+    logger.info("Polling...")
     app.run_polling(drop_pending_updates=True)
 
 
