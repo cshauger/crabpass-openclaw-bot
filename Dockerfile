@@ -1,12 +1,10 @@
-# Simple OpenClaw wrapper for CrabPass
-FROM ghcr.io/openclaw/openclaw:latest
+FROM python:3.11-slim
 
-# Copy startup script
-COPY entrypoint.sh /entrypoint.sh
+WORKDIR /app
 
-USER root
-RUN chmod +x /entrypoint.sh
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-USER node
+COPY main.py .
 
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "main.py"]
