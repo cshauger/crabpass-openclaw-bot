@@ -1,0 +1,11 @@
+# OpenClaw config - generated from environment variables
+model: ${MODEL:-groq/llama-3.3-70b-versatile}
+
+channels:
+  telegram:
+    token: ${TELEGRAM_BOT_TOKEN}
+    allowedUsers:
+      - ${OWNER_TELEGRAM_ID}
+
+# API Keys (set via environment)
+# GROQ_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY are read from env automatically
